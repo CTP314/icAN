@@ -8,7 +8,6 @@ decoder 的输入为 两个向量
 可以调: kernel channels, 可以尝试加dropout(目前没有)，目前输出为-1到1之间的值，可以确认一下是不是所有的四个channel大小都256
 
 ## To do
-可以整理一下数据，比如看看能不能再搞个按类别分的
 加上dataloader
 模型搭建完成，写一下loss，这个有好几个loss，可以好好看一下，可以适当改进一下？
 搞一下embedding的降维可视化

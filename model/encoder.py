@@ -65,3 +65,14 @@ if __name__ == '__main__':
     encoder_test = encoder(config_test)
     print_network(encoder_test)
     print(encoder_test(torch.zeros(1,4,128,128)).shape)
+
+class discriminator(encoder):
+    def __init__(self, config):
+        super().__init__(config)
+        self.latent_size = config.latent_size
+        self.num_categories = config.num_categories
+        self.category_discriminator = nn.Linear(self.latent_size, self.num_categories)
+        
+    
+    def forward(self, image):
+        represenatations = super().forward(image)
