@@ -9,3 +9,4 @@ Pillow
 h5py
 wandb
 pyrallis
+scikit-learn 

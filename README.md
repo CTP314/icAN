@@ -19,6 +19,7 @@ decoder 的输入为 两个向量
 
 ```
 conda create -n icAN python=3.9
+conda activate icAN
 pip install -r requirements.txt
 
 ```
