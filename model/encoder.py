@@ -44,7 +44,7 @@ class encoder(nn.Module):
         return self.net(image)    
 
 class config():
-    def __init__(self, latent_size, label_size,  output_width, device, activation,kernel_channels, output_channels):
+    def __init__(self, latent_size, label_size,  output_width, device, activation,kernel_channels, output_channels, num_categories):
         self.latent_size = latent_size
         self.image_width = output_width
         self.device = device
@@ -52,6 +52,7 @@ class config():
         self.label_size = label_size
         self.kernel_channels = kernel_channels
         self.image_channels = output_channels
+        self.num_categories = num_categories
         
 def print_network(net):
     num_params = 0
@@ -59,12 +60,6 @@ def print_network(net):
         num_params += param.numel()
     print(net)
     print('Total number of parameters: %d' % num_params)
-    
-if __name__ == '__main__':
-    config_test = config(10, 3, 128, 'cpu', nn.ELU, 64, 4)
-    encoder_test = encoder(config_test)
-    print_network(encoder_test)
-    print(encoder_test(torch.zeros(1,4,128,128)).shape)
 
 class discriminator(encoder):
     def __init__(self, config):
@@ -72,7 +67,19 @@ class discriminator(encoder):
         self.latent_size = config.latent_size
         self.num_categories = config.num_categories
         self.category_discriminator = nn.Linear(self.latent_size, self.num_categories)
-        
+        self.true_false_discriminator = nn.Linear(self.latent_size, 1)
     
     def forward(self, image):
-        represenatations = super().forward(image)
+        representations = super().forward(image)
+        print(representations.shape)
+        representations = representations.squeeze()
+        print(representations.shape)
+        return self.category_discriminator(representations), self.true_false_discriminator(representations)
+        
+if __name__ == '__main__':
+    config_test = config(10, 3, 128, 'cpu', nn.ELU, 64, 4, 10)
+    encoder_test = encoder(config_test)
+    discriminator_test = discriminator(config_test)
+    print_network(encoder_test)
+    print(encoder_test(torch.zeros(1,4,128,128)).shape)
+    print(discriminator_test((torch.zeros(3,4,128,128))))
