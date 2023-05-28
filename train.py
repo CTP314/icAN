@@ -1,9 +1,227 @@
-class trainer():
-    def __init__(self, config):
-        # factor for balancing different losses
-        self.L1_penalty = config.L1_penalty
-        self.Lconst_penalty = config.Lconst_penalty
-        self.Ltv_penalty = config.Ltv_penalty
-        self.Lcategory_penalty = config.Lcategory_penalty
+import numpy as np
+import pyrallis
+import torch
+from torch.distributions import Normal, TanhTransform, TransformedDistribution
+import torch.nn as nn
+import torch.nn.functional as F
+import wandb
+from typing import Any, Dict, List, Optional, Tuple, Union
+from dataclasses import asdict, dataclass
+import os
+import random
+import uuid
+from tqdm import tqdm
+from torch.utils.data import DataLoader
+
+from dataset import IconDataset
+
+from model.encoder import Encoder, Discriminator
+from model.decoder import Decoder
     
+@dataclass
+class TrainConfig:
+    device: str = 'cuda'
+    seed: int = 0
+    data_path: str = 'data/'
+    checkpoints_path: Optional[str] = None  # Save path
+    load_model: str = ""  # Model load file name, "" doesn't load
+
+    # 数据集超参数
+    themes = ['ios7', 'ios11']
+    bias = False
+
+    # 网络超参数
+    latent_size: int = 10
+    label_size: int = 2
+    image_width: int = 128
+    activation = nn.ELU
+    kernel_channels: int = 64
+    image_channels: int = 4
+    num_categories: int = 2
+
+    # 训练超参数
+    num_epochs: int = 10
+    batch_size: int = 2
+
+    # Wandb logging
+    is_wandb: bool = True
+    project: str = 'icAN'
+    name: str = 'demo'
+
+def set_seed(
+    seed: int, deterministic_torch: bool = False
+):
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    torch.use_deterministic_algorithms(deterministic_torch)   
+
+def wandb_init(config: dict):
+    wandb.init(
+        config=config,
+        project=config['project'],
+        name=config['name'],
+        id=str(uuid.uuid4())
+    )
+    wandb.run.save()
+
+class Trainer:
+    def __init__(
+        self,
+        encoder,
+        encoder_optimizer,
+        decoder,
+        decoder_optimizer,
+        discriminator,
+        discriminator_optimizer,
+        L1_penalty=100, 
+        Lconst_penalty=15, 
+        Ltv_penalty=0.0,
+        Lcategory_penalty=1.0
+    ):
+        self.encoder = encoder
+        self.encoder_optimizer = encoder_optimizer
+        self.decoder = decoder
+        self.decoder_optimzer = decoder_optimizer
+        self.discriminator = discriminator
+        self.discriminator_optimizer = discriminator_optimizer
+
+
+        self.L1_penalty = L1_penalty
+        self.Lconst_penalty = Lconst_penalty
+        self.Ltv_penalty = Ltv_penalty
+        self.Lcategory_penalty = Lcategory_penalty
+
+        self.total_it = 0
+
+    def train(self, batch):
+        self.total_it += 1
+        icon_src, icon_tar, theme_tar = batch
+        log_dict = {}
+        # print(icon_src.shape)
+        icon_src_enc = self.encoder(icon_src)
+        icon_fake = self.decoder(icon_src_enc, theme_tar)
+        
+        real_category_logits, real_D_logits = self.discriminator(icon_tar)
+        fake_category_logits, fake_D_logits = self.discriminator(icon_fake)
+        
+        icon_fake_enc = self.encoder(icon_fake)
+        const_loss = F.mse_loss(icon_fake_enc, icon_src_enc) * self.Lconst_penalty
+        
+        real_category_loss = F.nll_loss(real_category_logits, theme_tar)
+        fake_category_loss = F.nll_loss(fake_category_logits, theme_tar)
+        category_loss = self.Lcategory_penalty * (real_category_loss + fake_category_loss)
+
+        d_loss_real = F.binary_cross_entropy_with_logits(real_D_logits, torch.ones_like(real_D_logits, dtype=torch.float32))
+        d_loss_fake = F.binary_cross_entropy_with_logits(fake_D_logits, torch.zeros_like(fake_D_logits, dtype=torch.float32))
+
+        l1_loss = F.l1_loss(icon_fake, icon_tar) * self.L1_penalty
+
+        width = icon_fake.size(2)
+        # print(icon_fake.shape)
+        tv_loss = (F.mse_loss(icon_fake[..., 1:, :], icon_fake[..., :width - 1, :]) / width
+               + F.mse_loss(icon_fake[..., 1:], icon_fake[..., :width - 1]) / width) * self.Ltv_penalty
+        
+        cheat_loss = F.binary_cross_entropy_with_logits(fake_D_logits, torch.ones_like(fake_D_logits, dtype=torch.float32))
+
+        g_loss = cheat_loss + l1_loss + self.Lcategory_penalty * fake_category_loss + const_loss + tv_loss
+        self.encoder_optimizer.zero_grad()
+        self.decoder_optimzer.zero_grad()
+        
+        g_loss.backward()
+        
+        self.encoder_optimizer.step()
+        self.decoder_optimzer.step()
+
+
+        real_category_logits, real_D_logits = self.discriminator(icon_tar.detach())
+        fake_category_logits, fake_D_logits = self.discriminator(icon_fake.detach())
+        
+        real_category_loss = F.nll_loss(real_category_logits, theme_tar)
+        fake_category_loss = F.nll_loss(fake_category_logits, theme_tar)
+        category_loss = self.Lcategory_penalty * (real_category_loss + fake_category_loss)
+
+        d_loss_real = F.binary_cross_entropy_with_logits(real_D_logits, torch.ones_like(real_D_logits, dtype=torch.float32))
+        d_loss_fake = F.binary_cross_entropy_with_logits(fake_D_logits, torch.zeros_like(fake_D_logits, dtype=torch.float32))
+
+
+        d_loss = d_loss_real + d_loss_fake + category_loss / 2.0
+        self.discriminator_optimizer.zero_grad()
+        d_loss.backward()
+        self.discriminator_optimizer.step()
+
+        log_dict['const_loss'] = const_loss.detach().cpu().numpy()
+        log_dict['real_category_loss'] = real_category_loss.detach().cpu().numpy()
+        log_dict['fake_category_loss'] = fake_category_loss.detach().cpu().numpy()
+        log_dict['category_loss'] = category_loss.detach().cpu().numpy()
+        log_dict['l1_loss'] = l1_loss.detach().cpu().numpy()
+        log_dict['tv_loss'] = tv_loss.detach().cpu().numpy()
+        log_dict['cheat_loss'] = cheat_loss.detach().cpu().numpy()
+        log_dict['d_loss'] = d_loss.detach().cpu().numpy()
+        log_dict['g_loss'] = g_loss.detach().cpu().numpy()
+        
+        return log_dict
+
+@pyrallis.wrap()
+def train(config: TrainConfig):
+    train_dataset = IconDataset(
+        data_path=config.data_path, 
+        device=config.device,
+        themes=config.themes,
+        bias=config.bias
+    )
+    train_loader = DataLoader(
+        train_dataset, 
+        config.batch_size, 
+        shuffle=True, 
+        collate_fn=train_dataset.collate_fn
+    )
+
+    seed = config.seed
+    set_seed(seed)
+
+    encoder = Encoder(config).to(config.device)
+    discriminator = Discriminator(config).to(config.device)
+    decoder = Decoder(config).to(config.device)
+
+    encoder_optimizer = torch.optim.Adam(encoder.parameters(), lr=2e-4,  betas=(0.5, 0.999))
+    decoder_optimizer = torch.optim.Adam(decoder.parameters(), lr=2e-4,  betas=(0.5, 0.999))
+    discriminator_optimizer = torch.optim.Adam(discriminator.parameters(), lr=2e-4,  betas=(0.5, 0.999))
+
+    kwargs = {
+        'encoder': encoder,
+        'encoder_optimizer': encoder_optimizer,
+        'decoder': decoder,
+        'decoder_optimizer': decoder_optimizer,
+        'discriminator': discriminator,
+        'discriminator_optimizer': discriminator_optimizer
+    }
+
+    trainer = Trainer(**kwargs)
+
+    print('-' * 50)
+    print(f'Training icAN, Seed: {seed}')
+    print('-' * 50)
+
+    if config.load_model != '':
+        raise NotImplementedError
     
+    if config.is_wandb:
+        wandb_init(asdict(config))
+
+    for epoch in range(config.num_epochs):
+        with tqdm(train_loader) as pbar:
+            for batch in pbar:
+                log_dict = trainer.train(batch)
+
+                pbar.set_description(
+                    'Epoch: %d, D_loss: %.4f, G_loss: %.4f'%(epoch, log_dict['d_loss'], log_dict['g_loss'])
+                )
+
+                if config.is_wandb:
+                    wandb.log(log_dict)
+    
+
+if __name__ == '__main__':
+    train()

@@ -10,7 +10,7 @@ import os
 import cv2
 
 class IconDataset(Dataset):
-    def __init__(self, data_path, type, device, themes=None, bias=True) -> None:
+    def __init__(self, data_path, device, themes=None, bias=True) -> None:
         super(IconDataset, self).__init__()
         self.device = device
         self.data_path = data_path
@@ -19,22 +19,24 @@ class IconDataset(Dataset):
         labels = []
         self.theme2label = {}
         self.label2theme = {}
-        for filepath, dirnames, filenames in os.walk(data_path):
-            label = filepath[5:]
-            labels.append(label)
-            self.label2theme[label] = []
-            for theme_file in filenames:
-                theme = theme_file[:-4]
-                # print(os.path.join(self.data_path, label, theme+'.png'))
-                img = cv2.imread(os.path.join(self.data_path, label, theme+'.png'), cv2.IMREAD_UNCHANGED)
-                if img is not None and img.shape == (128, 128, 4):
-                    self.label2theme[label].append(theme)
+        loader = [(a, b, c) for a, b, c in os.walk(data_path)]
+        with tqdm(loader, desc='loading dataset...') as pbar:
+            for filepath, dirnames, filenames in pbar:
+                label = filepath[5:]
+                labels.append(label)
+                self.label2theme[label] = []
+                for theme_file in filenames:
+                    theme = theme_file[:-4]
+                    # print(os.path.join(self.data_path, label, theme+'.png'))
+                    img = cv2.imread(os.path.join(self.data_path, label, theme+'.png'), cv2.IMREAD_UNCHANGED)
+                    if img is not None and img.shape == (128, 128, 4):
+                        self.label2theme[label].append(theme)
 
-                    if theme not in self.themes:
-                        self.themes.append(theme)
-                        self.theme2label[theme] = []
-                    
-                    self.theme2label[theme].append(label)
+                        if theme not in self.themes:
+                            self.themes.append(theme)
+                            self.theme2label[theme] = []
+                        
+                        self.theme2label[theme].append(label)
 
         if themes is not None:
             self.themes = themes
@@ -70,6 +72,7 @@ class IconDataset(Dataset):
         # print(label, theme)
         icon = cv2.imread(os.path.join(self.data_path, label, theme+'.png'), cv2.IMREAD_UNCHANGED).astype(np.float64)
         assert icon.shape == (128, 128, 4)
+        assert theme in ['ios11', 'ios7']
         return icon, label, theme
     
     def collate_fn(self, samples):
@@ -80,9 +83,9 @@ class IconDataset(Dataset):
             t = np.random.choice(self.label2theme[label])
             icon_S = torch.FloatTensor(
                 cv2.imread(os.path.join(self.data_path, label, t + '.png'), cv2.IMREAD_UNCHANGED) / 255, 
-            ).to(self.device).unsqueeze(0)
-            assert icon_S.size(1) == 128
-            icon_T = torch.FloatTensor(icon / 255).to(self.device).unsqueeze(0)
+            ).to(self.device).permute(2, 0, 1).unsqueeze(0)
+            assert icon_S.size(2) == 128
+            icon_T = torch.FloatTensor(icon / 255).to(self.device).permute(2, 0, 1).unsqueeze(0)
             assert theme in self.themes
             assert theme in self.theme2id.keys()
             theme_T = torch.LongTensor([self.theme2id[theme]]).to(self.device)
@@ -100,8 +103,8 @@ class IconDataset(Dataset):
             
 
 if __name__ == '__main__':
-    # train_data = IconDataset('data/', device='cuda', type='train', themes=['win10', 'ios11'], bias=False)
-    train_data = IconDataset('data/', device='cuda', type='train')
+    # train_data = IconDataset('data/', device='cuda', themes=['win10', 'ios11'], bias=False)
+    train_data = IconDataset('data/', device='cuda')
     print(len(train_data))
     icon, label, theme = train_data[0]
     print(icon.shape, label, theme)

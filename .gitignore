@@ -1,3 +1,4 @@
 data/*
 data.tar.gz
 .DS_Store
+wandb/

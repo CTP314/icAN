@@ -1,7 +1,7 @@
 import numpy as np
 import torch
-from .encoder import encoder, discriminator
-from .decoder import decoder
+from .encoder import Encoder, Discriminator
+from .decoder import Decoder
 from .embedding import get_embedding
 
 seed = 123123
@@ -21,10 +21,10 @@ Lcategory_penalty = config.Lcategory_penalty
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 epochs = config.epochs
-encoder_net_1 = encoder(config)
-encoder_net_2 = encoder(config)
-discriminator_net = discriminator(config)
-decoder_net = decoder(config)
+encoder_net_1 = Encoder(config)
+encoder_net_2 = Encoder(config)
+discriminator_net = Discriminator(config)
+decoder_net = Decoder(config)
 
 optimizer_e1 = torch.optim.Adam(encoder_net_1.parameters(), lr=2e-4,  betas=(0.5, 0.999))
 optimizer_e2 = torch.optim.Adam(encoder_net_2.parameters(), lr=2e-4,  betas=(0.5, 0.999))
@@ -36,7 +36,7 @@ for epoch in range(epochs):
         input_image, labels, target,  = data
         image_embedding = encoder_net_1(image_embedding)
         label_embedding = get_embedding(labels)
-        new_image = decoder(image_embedding, label_embedding)
+        new_image = Decoder(image_embedding, label_embedding)
         
         
         

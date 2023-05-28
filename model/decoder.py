@@ -2,7 +2,7 @@ import torch
 from torch import nn 
 import torch.nn.functional as F
 
-class decoder(nn.Module):
+class Decoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         
@@ -18,6 +18,8 @@ class decoder(nn.Module):
     # decoder current setting: input latent variable and style embedding
     # output bsz * channels * height * width
     
+        self.embed = nn.Embedding(config.num_categories, self.label_size)
+
         self.net = nn.Sequential(
             nn.ConvTranspose2d(self.label_size+self.latent_size, 8 * self.kernel_channels, self.image_width//32, 1, 0),
             self.activation(),
@@ -41,7 +43,8 @@ class decoder(nn.Module):
         )
         
     def forward(self, latent, label):
-        return self.net(torch.cat((latent, label),1))    
+        label = self.embed(label).reshape(-1, self.label_size, 1, 1)
+        return self.net(torch.cat((latent, label), 1))    
 
 class config():
     def __init__(self, latent_size, label_size,  output_width, device, activation,kernel_channels, output_channels):
@@ -62,6 +65,6 @@ def print_network(net):
     
 if __name__ == '__main__':
     config_test = config(10, 3, 128, 'cpu', nn.ELU, 64, 4)
-    decoder_test = decoder(config_test)
+    decoder_test = Decoder(config_test)
     print_network(decoder_test)
     print(decoder_test(torch.zeros(1,10,1,1), torch.zeros(1,3,1,1)).shape)

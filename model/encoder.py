@@ -2,7 +2,7 @@ import torch
 from torch import nn 
 import torch.nn.functional as F
 
-class encoder(nn.Module):
+class Encoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         
@@ -61,7 +61,7 @@ def print_network(net):
     print(net)
     print('Total number of parameters: %d' % num_params)
 
-class discriminator(encoder):
+class Discriminator(Encoder):
     def __init__(self, config):
         super().__init__(config)
         self.latent_size = config.latent_size
@@ -71,15 +71,15 @@ class discriminator(encoder):
     
     def forward(self, image):
         representations = super().forward(image)
-        print(representations.shape)
+        # print(representations.shape)
         representations = representations.squeeze()
-        print(representations.shape)
+        # print(representations.shape)
         return self.category_discriminator(representations), self.true_false_discriminator(representations)
         
 if __name__ == '__main__':
     config_test = config(10, 3, 128, 'cpu', nn.ELU, 64, 4, 10)
-    encoder_test = encoder(config_test)
-    discriminator_test = discriminator(config_test)
+    encoder_test = Encoder(config_test)
+    discriminator_test = Discriminator(config_test)
     print_network(encoder_test)
     print(encoder_test(torch.zeros(1,4,128,128)).shape)
     print(discriminator_test((torch.zeros(3,4,128,128))))
