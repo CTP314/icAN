@@ -64,15 +64,28 @@ class IconDataset(Dataset):
             for label in self.theme2label[theme]:
                 self.data.append((label, theme))
 
+        print('-' * 50)
+        print(f'#icons: {len(self.data)}, #themes: {len(self.themes)}')
+
     def __len__(self):
         return len(self.data)
+    
+    def read_icon(self, label, theme):
+        icon = cv2.imread(
+            os.path.join(self.data_path, label, theme+'.png'), 
+            cv2.IMREAD_UNCHANGED, 
+        ).astype(np.float64) / 255
+        return icon
+    
+    def read_icon_edge(self, label, theme):
+        icon = self.read_icon(label, theme)
+        return cv2.Canny(icon, 10, 100)[..., None]
     
     def __getitem__(self, index):
         label, theme = self.data[index]
         # print(label, theme)
-        icon = cv2.imread(os.path.join(self.data_path, label, theme+'.png'), cv2.IMREAD_UNCHANGED).astype(np.float64)
-        assert icon.shape == (128, 128, 4)
-        assert theme in ['ios11', 'ios7']
+        icon = self.read_icon(label, theme)
+        # assert theme in ['ios11', 'ios7']
         return icon, label, theme
     
     def collate_fn(self, samples):
@@ -81,11 +94,9 @@ class IconDataset(Dataset):
         themes_T = []
         for icon, label, theme in samples:
             t = np.random.choice(self.label2theme[label])
-            icon_S = torch.FloatTensor(
-                cv2.imread(os.path.join(self.data_path, label, t + '.png'), cv2.IMREAD_UNCHANGED) / 255, 
-            ).to(self.device).permute(2, 0, 1).unsqueeze(0)
+            icon_S = torch.FloatTensor(self.read_icon(label, t)).to(self.device).permute(2, 0, 1).unsqueeze(0)
             assert icon_S.size(2) == 128
-            icon_T = torch.FloatTensor(icon / 255).to(self.device).permute(2, 0, 1).unsqueeze(0)
+            icon_T = torch.FloatTensor(icon).to(self.device).permute(2, 0, 1).unsqueeze(0)
             assert theme in self.themes
             assert theme in self.theme2id.keys()
             theme_T = torch.LongTensor([self.theme2id[theme]]).to(self.device)
@@ -112,6 +123,9 @@ if __name__ == '__main__':
     train_dataloader = DataLoader(train_data, 32, collate_fn=train_data.collate_fn)
 
     print(len(train_dataloader))
+    icon_edge = train_data.read_icon_edge('app-store', 'clouds')
+    print(icon_edge.shape)
+    cv2.imwrite('edge.png', icon_edge)
     with tqdm(train_dataloader, desc='loading...') as pbar:
         for icons_S, icons_T, themes_T in pbar:
             # print(icons_S.shape, icons_T.shape, themes_T.shape)

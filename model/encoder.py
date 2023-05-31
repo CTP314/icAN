@@ -37,7 +37,7 @@ class Encoder(nn.Module):
             self.activation(),
             nn.BatchNorm2d(self.kernel_channels * 8),
             nn.Conv2d(self.kernel_channels * 8, self.latent_size, self.image_width//32, 1, 0),
-            nn.Sigmoid()
+            self.activation(),
         )
         
     def forward(self, image):

@@ -1,0 +1,32 @@
+device: str = 'cuda:0'
+seed: int = 1
+data_path: str = 'data/'
+checkpoints_path: Optional[str] = 'ckpt/'  # Save path
+load_model: str = ""  # Model load file name, "" doesn't load
+
+# 数据集超参数
+themes = None
+bias = True
+
+# 网络超参数
+latent_size: int = 1024
+label_size: int = 128
+image_width: int = 128
+activation = nn.ELU
+kernel_channels: int = 64
+image_channels: int = 4
+num_categories: int = 270 # 270
+L1_penalty = 1000 
+Lconst_penalty = 15 
+Ltv_penalty = 0.1
+Lcategory_penalty = 1    
+
+# 训练超参数
+num_epochs: int = 50
+batch_size: int = 128
+eval_freq: int = 10
+
+# Wandb logging
+is_wandb: bool = True
+project: str = 'icAN'
+name: str = 'basic'

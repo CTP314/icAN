@@ -19,9 +19,10 @@ class Decoder(nn.Module):
     # output bsz * channels * height * width
     
         self.embed = nn.Embedding(config.num_categories, self.label_size)
+        # self.num_categories = config.num_categories
 
         self.net = nn.Sequential(
-            nn.ConvTranspose2d(self.label_size+self.latent_size, 8 * self.kernel_channels, self.image_width//32, 1, 0),
+            nn.ConvTranspose2d(self.latent_size+self.label_size, 8 * self.kernel_channels, self.image_width//32, 1, 0),
             self.activation(),
             nn.ConvTranspose2d(8 * self.kernel_channels, 4 * self.kernel_channels, 4, 2, 1),
             nn.BatchNorm2d(4 * self.kernel_channels),
@@ -39,11 +40,13 @@ class Decoder(nn.Module):
             nn.BatchNorm2d(self.kernel_channels),
             self.activation(),
             nn.ConvTranspose2d(self.kernel_channels, self.image_channels, 3, 1, 1),
-            nn.Tanh()
+            nn.Sigmoid()
         )
         
     def forward(self, latent, label):
         label = self.embed(label).reshape(-1, self.label_size, 1, 1)
+        # label = F.one_hot(label, num_classes=self.num_categories).reshape(-1, self.num_categories, 1, 1)
+        # print(label.shape)
         return self.net(torch.cat((latent, label), 1))    
 
 class config():
