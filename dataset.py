@@ -13,30 +13,35 @@ class IconDataset(Dataset):
     def __init__(self, data_path, device, themes=None, bias=True) -> None:
         super(IconDataset, self).__init__()
         self.device = device
-        self.data_path = data_path
-
+        self.root_path = data_path
+        self.data_path = data_path + '/raw'
+        self.edge_path = data_path + '/edge'
+        self.meta_path = data_path + '/meta'
         self.themes = []
         labels = []
         self.theme2label = {}
         self.label2theme = {}
-        loader = [(a, b, c) for a, b, c in os.walk(data_path)]
+        loader = [(a, b, c) for a, b, c in os.walk(self.data_path)]
         with tqdm(loader, desc='loading dataset...') as pbar:
             for filepath, dirnames, filenames in pbar:
-                label = filepath.split('/')[1]
+                if len(filepath.split('/')) <= 2:
+                    continue
+                label = filepath.split('/')[-1]
                 labels.append(label)
                 self.label2theme[label] = []
                 for theme_file in filenames:
-                    theme = theme_file[:-4]
-                    # print(os.path.join(self.data_path, label, theme+'.png'))
-                    img = cv2.imread(os.path.join(self.data_path, label, theme+'.png'), cv2.IMREAD_UNCHANGED)
-                    if img is not None and img.shape == (128, 128, 4):
-                        self.label2theme[label].append(theme)
+                    if theme_file[-3:] == 'png':
+                        theme = theme_file[:-4]
+                        # print(os.path.join(self.data_path, label, theme+'.png'))
+                        img = cv2.imread(os.path.join(self.data_path, label, theme+'.png'), cv2.IMREAD_UNCHANGED)
+                        if img is not None and img.shape == (128, 128, 4):
+                            self.label2theme[label].append(theme)
 
-                        if theme not in self.themes:
-                            self.themes.append(theme)
-                            self.theme2label[theme] = []
-                        
-                        self.theme2label[theme].append(label)
+                            if theme not in self.themes:
+                                self.themes.append(theme)
+                                self.theme2label[theme] = []
+                            
+                            self.theme2label[theme].append(label)
 
         if themes is not None:
             self.themes = themes
@@ -75,40 +80,52 @@ class IconDataset(Dataset):
             os.path.join(self.data_path, label, theme+'.png'), 
             cv2.IMREAD_UNCHANGED, 
         ).astype(np.float64) / 255 * 2 - 1
-        return icon
+        return {
+            'img': icon,
+            'label': label,
+            'theme': theme,
+        }
     
     def read_icon_edge(self, label, theme):
-        icon = self.read_icon(label, theme)
-        return cv2.Canny(icon, 10, 100)[..., None]
+        icon = cv2.imread(
+            os.path.join(self.edge_path, label, theme+'_edge.png'), 
+            cv2.IMREAD_UNCHANGED, 
+        ).astype(np.float64) / 255 * 2 - 1
+        return {
+            'img': icon,
+            'label': label,
+            'theme': theme,
+            'edge': True,
+        }
     
     def __getitem__(self, index):
         label, theme = self.data[index]
         # print(label, theme)
         icon = self.read_icon(label, theme)
         # assert theme in ['ios11', 'ios7']
-        return icon, label, theme
+        return icon
     
     def read_icon_with_rtheme(self, label):
         t = np.random.choice(self.label2theme[label])
         return self.read_icon(label, t)
     
     def read_icon_with_rlabel(self, theme, icon):
-        labels = np.random.choice(self.theme2label[theme], 100)
-        l_ref = labels[0]
-        dis_ref = np.abs(self.read_icon(l_ref, theme) - icon).sum()
-        for l in labels:
-            dis = np.abs(self.read_icon(l, theme) - icon).sum()
-            if dis_ref > dis:
-                l_ref = l
-                dis_ref = dis
-        return self.read_icon(l_ref, theme)
+        with open(os.path.join(self.meta_path, icon['label'], icon['theme'] + '-' + theme + '.txt'), 'r') as f:
+            line = f.readline().strip().split(' ')
+        label_ref = np.random.choice(line)
+        try:
+            icon = self.read_icon(label_ref, theme)
+        except:
+            icon = {'img': np.zeros((128, 128, 4))}
+        return icon
     
     def collate_fn(self, samples):
         icons_S = []
         icons_T = []
         themes_T = []
-        for icon, label, theme in samples:
-            icon_S = torch.FloatTensor(self.read_icon_with_rtheme(label)).to(self.device).permute(2, 0, 1).unsqueeze(0)
+        for info in samples:
+            icon, theme, label = info['img'], info['theme'], info['label']
+            icon_S = torch.FloatTensor(self.read_icon_with_rtheme(label)['img']).to(self.device).permute(2, 0, 1).unsqueeze(0)
             assert icon_S.size(2) == 128
             icon_T = torch.FloatTensor(icon).to(self.device).permute(2, 0, 1).unsqueeze(0)
             assert theme in self.themes
@@ -129,10 +146,11 @@ class IconDataset(Dataset):
         icons_S = []
         icons_T = []
         themes_T = []
-        for icon, label, theme in samples:
+        for info in samples:
+            icon, theme, label = info['img'], info['theme'], info['label']
             icon_S = self.read_icon_with_rtheme(label)
-            icon_ref = torch.FloatTensor(self.read_icon_with_rlabel(theme, icon_S)).to(self.device).permute(2, 0, 1).unsqueeze(0)
-            icon_S = torch.FloatTensor(icon_S).to(self.device).permute(2, 0, 1).unsqueeze(0)
+            icon_ref = torch.FloatTensor(self.read_icon_with_rlabel(theme, icon_S)['img']).to(self.device).permute(2, 0, 1).unsqueeze(0)
+            icon_S = torch.FloatTensor(icon_S['img']).to(self.device).permute(2, 0, 1).unsqueeze(0)
             assert icon_S.size(2) == 128
             icon_T = torch.FloatTensor(icon).to(self.device).permute(2, 0, 1).unsqueeze(0)
             assert theme in self.themes
@@ -156,17 +174,19 @@ if __name__ == '__main__':
     # train_data = IconDataset('data/', device='cuda', themes=['win10', 'ios11'], bias=False)
     train_data = IconDataset('data/', device='cuda')
     print(len(train_data))
-    icon, label, theme = train_data[0]
-    print(icon.shape, label, theme)
+    icon = train_data[0]
+    print(icon['img'].shape, icon['label'], icon['theme'])
 
     train_dataloader = DataLoader(train_data, 32, collate_fn=train_data.collate_fn)
-
+    
     print(len(train_dataloader))
     icon_edge = train_data.read_icon_edge('app-store', 'clouds')
-    print(icon_edge.shape)
-    cv2.imwrite('edge.png', icon_edge)
+    train_data.read_icon_with_rlabel(icon['theme'], icon_edge)
+    print(icon_edge['img'].shape)
+    cv2.imwrite('edge.png', (icon_edge['img'] / 255 * 2 - 1).astype(np.uint8))
+
     with tqdm(train_dataloader, desc='loading...') as pbar:
-        for icons_S, icons_T, themes_T in pbar:
+        for info in pbar:
             # print(icons_S.shape, icons_T.shape, themes_T.shape)
             pass
     # print('=' * 50)

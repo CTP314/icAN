@@ -23,8 +23,8 @@ from model.resnet.gan_resnet import Generator, Discriminator, init_net
 class TrainConfig:
     device: str = 'cuda:0'
     seed: int = 1
-    data_path: str = 'data_new/'
-    checkpoints_path: Optional[str] = None # 'ckpt/'  # Save path
+    data_path: str = 'data/'
+    checkpoints_path: Optional[str] = 'ckpt/'  # Save path
     load_model: str = ""  # Model load file name, "" doesn't load
 
     # 数据集超参数
@@ -47,12 +47,12 @@ class TrainConfig:
 
 
     # 训练超参数
-    num_epochs: int = 100
+    num_epochs: int = 200
     batch_size: int = 64
-    eval_freq: int = 1
+    eval_freq: int = 10
 
     # Wandb logging
-    is_wandb: bool = False
+    is_wandb: bool = True
     project: str = 'icAN'
     name: str = 'resnet-color-ref'
 
@@ -276,15 +276,17 @@ def train(config: TrainConfig):
 
         if (epoch + 1) % config.eval_freq == 0:
             print(f'Epoch: {epoch} evaluating...')
+            log_dict = {}
             for label in ['app-store', 'chrome', 'weibo', 'genshin-impact', 'adobe-illustrator']:
                 output = []
                 for theme in train_dataset.themes:
                     if theme in train_dataset.label2theme[label]:
-                        icons = [train_dataset.read_icon(label, theme)]
+                        icon_src = train_dataset.read_icon(label, theme)
+                        icons = [icon_src['img']]
                         for theme_tar in train_dataset.themes:
-                            icon_ref = train_dataset.read_icon_with_rlabel(theme_tar, icons[0])
-                            icon_tar = trainer.generate(icon_ref, icons[0], theme_id=train_dataset.theme2id[theme_tar])
-                            icons.append(icon_ref)
+                            icon_ref = train_dataset.read_icon_with_rlabel(theme_tar, icon_src)
+                            icon_tar = trainer.generate(icon_ref['img'], icon_src['img'], theme_id=train_dataset.theme2id[theme_tar])
+                            icons.append(icon_ref['img'])
                             icons.append(icon_tar)
                     else:
                         icons = [np.zeros((128, 128, 4))]
@@ -293,13 +295,14 @@ def train(config: TrainConfig):
                             icons.append(np.zeros((128, 128, 4)))
                     # print(np.concatenate(icons, axis=1).shape)   
                     output.append(np.concatenate(icons, axis=1))                   
-
                 output = ((np.concatenate(output, axis=0) + 1) / 2 * 255).astype(np.uint8)
+                output_wandb = cv2.cvtColor(output, cv2.COLOR_BGRA2RGBA)
+                log_dict[label] = wandb.Image(output_wandb, caption=label) 
                 os.makedirs(f'eval/{config.name}/{epoch}', exist_ok=True)
                 cv2.imwrite(f'eval/{config.name}/{epoch}/{label}.png', 
                             output, 
                 )
-
+            wandb.log(log_dict, step=trainer.total_it)
             if config.checkpoints_path is not None:
                 os.makedirs(config.checkpoints_path, exist_ok=True)
                 trainer.save(config.checkpoints_path)
