@@ -17,8 +17,8 @@ from torch.utils.data import DataLoader
 
 from dataset import IconDataset
 
-from model.encoder import Encoder, Discriminator
-from model.decoder import Decoder
+from model.basic.encoder import Encoder, Discriminator
+from model.basic.decoder import Decoder
     
 @dataclass
 class TrainConfig:
@@ -193,14 +193,16 @@ class ICAN:
 
     def state_dict(self) -> Dict[str, Any]:
         return {
-            "encoder": self.encoder.state_dict(),
-            "encoder_optimizer": self.encoder_optimizer.state_dict(),
-            "decoder": self.decoder.state_dict(),
-            "decoder_optimizer": self.decoder_optimizer.state_dict(),
-            "discriminator": self.discriminator.state_dict(),
-            "discriminator_optimizer": self.discriminator_optimizer.state_dict(),
-            "total_it": self.total_it,
+            "encoder": self.encoder,
+            "decoder": self.decoder,
+            "discriminator": self.discriminator,
         }
+    
+    def save(self, path):
+        for k, v in self.state_dict().items():
+            v.to('cpu')
+            torch.save(v.state_dict(), os.path.join(path, f"{k}_{self.total_it}.pt"))  
+            v.to('cuda')
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
         self.encoder.load_state_dict(state_dict["encoder"])
@@ -284,12 +286,10 @@ def train(config: TrainConfig):
                                 icon_tar, 
                                 [cv2.IMWRITE_PNG_COMPRESSION, 0]
                     )
-                    if config.checkpoints_path is not None:
-                        os.makedirs(config.checkpoints_path, exist_ok=True)
-                        torch.save(
-                            trainer.state_dict(),
-                            os.path.join(config.checkpoints_path, f"checkpoint_{epoch}.pt"),
-                        )        
+                    
+            if config.checkpoints_path is not None:
+                os.makedirs(config.checkpoints_path, exist_ok=True)
+                trainer.save(config.checkpoints_path)
 
 if __name__ == '__main__':
     train()

@@ -22,7 +22,7 @@ class IconDataset(Dataset):
         loader = [(a, b, c) for a, b, c in os.walk(data_path)]
         with tqdm(loader, desc='loading dataset...') as pbar:
             for filepath, dirnames, filenames in pbar:
-                label = filepath[5:]
+                label = filepath.split('/')[1]
                 labels.append(label)
                 self.label2theme[label] = []
                 for theme_file in filenames:
@@ -74,7 +74,7 @@ class IconDataset(Dataset):
         icon = cv2.imread(
             os.path.join(self.data_path, label, theme+'.png'), 
             cv2.IMREAD_UNCHANGED, 
-        ).astype(np.float64) / 255
+        ).astype(np.float64) / 255 * 2 - 1
         return icon
     
     def read_icon_edge(self, label, theme):
@@ -88,13 +88,27 @@ class IconDataset(Dataset):
         # assert theme in ['ios11', 'ios7']
         return icon, label, theme
     
+    def read_icon_with_rtheme(self, label):
+        t = np.random.choice(self.label2theme[label])
+        return self.read_icon(label, t)
+    
+    def read_icon_with_rlabel(self, theme, icon):
+        labels = np.random.choice(self.theme2label[theme], 100)
+        l_ref = labels[0]
+        dis_ref = np.abs(self.read_icon(l_ref, theme) - icon).sum()
+        for l in labels:
+            dis = np.abs(self.read_icon(l, theme) - icon).sum()
+            if dis_ref > dis:
+                l_ref = l
+                dis_ref = dis
+        return self.read_icon(l_ref, theme)
+    
     def collate_fn(self, samples):
         icons_S = []
         icons_T = []
         themes_T = []
         for icon, label, theme in samples:
-            t = np.random.choice(self.label2theme[label])
-            icon_S = torch.FloatTensor(self.read_icon(label, t)).to(self.device).permute(2, 0, 1).unsqueeze(0)
+            icon_S = torch.FloatTensor(self.read_icon_with_rtheme(label)).to(self.device).permute(2, 0, 1).unsqueeze(0)
             assert icon_S.size(2) == 128
             icon_T = torch.FloatTensor(icon).to(self.device).permute(2, 0, 1).unsqueeze(0)
             assert theme in self.themes
@@ -109,7 +123,32 @@ class IconDataset(Dataset):
         themes_T = torch.concatenate(themes_T, dim=0)
 
         return icons_S, icons_T, themes_T
+    
+    def collate_fn_ab(self, samples):
+        icons_ref = []
+        icons_S = []
+        icons_T = []
+        themes_T = []
+        for icon, label, theme in samples:
+            icon_S = self.read_icon_with_rtheme(label)
+            icon_ref = torch.FloatTensor(self.read_icon_with_rlabel(theme, icon_S)).to(self.device).permute(2, 0, 1).unsqueeze(0)
+            icon_S = torch.FloatTensor(icon_S).to(self.device).permute(2, 0, 1).unsqueeze(0)
+            assert icon_S.size(2) == 128
+            icon_T = torch.FloatTensor(icon).to(self.device).permute(2, 0, 1).unsqueeze(0)
+            assert theme in self.themes
+            assert theme in self.theme2id.keys()
+            theme_T = torch.LongTensor([self.theme2id[theme]]).to(self.device)
+            icons_ref.append(icon_ref)
+            icons_S.append(icon_S)
+            icons_T.append(icon_T)
+            themes_T.append(theme_T)
 
+        icons_ref = torch.concatenate(icons_ref, dim=0)
+        icons_S = torch.concatenate(icons_S, dim=0)
+        icons_T = torch.concatenate(icons_T, dim=0)
+        themes_T = torch.concatenate(themes_T, dim=0)
+
+        return icons_ref, icons_S, icons_T, themes_T
 
             
 
