@@ -14,6 +14,9 @@ import cv2
 import copy
 from tqdm import tqdm
 from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
+from canny_with_grad.net_canny import Net
+from imageio import imread, imsave
 
 from dataset import IconDataset
 
@@ -79,6 +82,22 @@ def wandb_init(config: dict):
     )
     wandb.run.save()
 
+# input shape = bsz * cnl * w * h
+def compute_pixel_color_distribution(batched_image):
+    distribution_dict = []
+    for image in batched_image:
+        distribution = {}
+        for w in range(image.shape[1]):
+            for h in range(image.shape[2]):
+                key = str(np.round(image[:,w, h].detach().cpu().numpy(), 1))
+                distribution[key] = distribution[key] + 1 if key in distribution else 1        
+        distribution_dict.append(distribution)
+    return distribution_dict
+
+def RGBA2RGB01(batched_image):
+    return ((batched_image[:, :3, ...]+1)/2) * ((batched_image[:, 3, ...]+1)/2).unsqueeze(1)
+    
+
 class ICAN:
     def __init__(
         self,
@@ -88,6 +107,7 @@ class ICAN:
         discriminator_optimizer,
         device,
         L1_penalty=1000, 
+        edge_L1_penalty=2000,
         Lconst_penalty=15, 
         Ltv_penalty=0.1,
         Lcategory_penalty=1
@@ -98,6 +118,7 @@ class ICAN:
         self.discriminator_optimizer = discriminator_optimizer
         self.device = device
 
+        self.edge_L1_penalty = edge_L1_penalty
         self.L1_penalty = L1_penalty
         self.Lconst_penalty = Lconst_penalty
         self.Ltv_penalty = Ltv_penalty
@@ -111,10 +132,54 @@ class ICAN:
 
         self.total_it += 1
         icon_ref, icon_src, icon_tar, theme_tar = batch
+        # compute_pixel_color_distribution(icon_ref)
+        
         log_dict = {}
-        # print(icon_src.shape)
         icon_src_enc = self.generator.encoder(torch.cat([icon_src, icon_ref], dim=1))
         icon_fake = self.generator.decoder(icon_src_enc, theme_tar)
+        
+        icon_tar_RGB = RGBA2RGB01(icon_tar)
+        icon_fake_RGB = RGBA2RGB01(icon_fake)
+        
+        net = Net(threshold = 5.0, use_cuda = True, device = self.device)
+        net2 = Net(threshold = 5.0, use_cuda = True, device = self.device)
+        
+        for param in net.parameters():
+            param.requires_grad = False
+        for param in net2.parameters():
+            param.requires_grad = False
+        
+        blurred_img, grad_mag, grad_orientation, thin_edges, thresholded, early_threshold = net(icon_tar_RGB)
+        blurred_img, grad_mag2, grad_orientation, thin_edges, thresholded2, early_threshold = net2(icon_fake_RGB)
+        # image = (thresholded.data.cpu().numpy()[0, 0]).astype(float)
+        # plt.imshow(image)
+        # plt.savefig("test.png")
+        # icon_tar = (icon_tar + 1) / 2 * 255
+        # image = icon_tar.permute(0,2,3,1).cpu().numpy()[1,:,:, :3].astype(np.uint8)
+        # plt.imshow(image)
+        # plt.savefig("test5.png")
+        # image = (thresholded.data.cpu().numpy()[1, 0]).astype(float)
+        # plt.imshow(image)
+        # plt.savefig("test2.png")
+        # image = icon_tar.permute(0,2,3,1).cpu().numpy()[2,:,:, :3].astype(np.uint8)
+        # plt.imshow(image)
+        # plt.savefig("test6.png")
+        # image = (thresholded.data.cpu().numpy()[2, 0]).astype(float)
+        # plt.imshow(image)
+        # plt.savefig("test3.png")
+        # image = icon_tar.permute(0,2,3,1).cpu().numpy()[3, :, :, :3].astype(np.uint8)
+        # plt.imshow(image)
+        # plt.savefig("test7.png")
+        # image = (thresholded.data.cpu().numpy()[3, 0]).astype(float)
+        # plt.imshow(image)
+        # plt.savefig("test4.png")
+        # print(icon_ref_rgb[0].permute(1,2,0).shape)
+        # image = ((icon_ref_rgb[0].permute(1,2,0).detach().cpu().numpy()+ 1) / 2 * 255).astype(np.uint8)
+        # plt.imshow(image)
+        # plt.savefig("test.png")
+        # raise NotImplementedError()
+        
+        # compute_pixel_color_distribution(icon_fake)
         
         real_category_logits, real_D_logits = self.discriminator(icon_tar)
         fake_category_logits, fake_D_logits = self.discriminator(icon_fake)
@@ -130,6 +195,8 @@ class ICAN:
         d_loss_fake = F.binary_cross_entropy_with_logits(fake_D_logits, torch.zeros_like(fake_D_logits, dtype=torch.float32))
 
         l1_loss = F.l1_loss(icon_fake, icon_tar) * self.L1_penalty
+        
+        edge_l1_loss = F.l1_loss(grad_mag.detach(), grad_mag2) * self.edge_L1_penalty
 
         width = icon_fake.size(2)
         # print(icon_fake.shape)
@@ -137,8 +204,9 @@ class ICAN:
                + F.mse_loss(icon_fake[..., 1:], icon_fake[..., :width - 1]) / width) * self.Ltv_penalty
         
         cheat_loss = F.binary_cross_entropy_with_logits(fake_D_logits, torch.ones_like(fake_D_logits, dtype=torch.float32))
+        torch.autograd.set_detect_anomaly(True)
 
-        g_loss = cheat_loss + l1_loss + self.Lcategory_penalty * fake_category_loss + const_loss + tv_loss
+        g_loss = cheat_loss + l1_loss + self.Lcategory_penalty * fake_category_loss + const_loss + tv_loss + edge_l1_loss
         
         self.generator_optimizer.zero_grad()
         g_loss.backward()
@@ -166,6 +234,7 @@ class ICAN:
         log_dict['fake_category_loss'] = fake_category_loss.detach().cpu().numpy()
         log_dict['category_loss'] = category_loss.detach().cpu().numpy()
         log_dict['l1_loss'] = l1_loss.detach().cpu().numpy()
+        log_dict['edge_l1_loss'] = edge_l1_loss.detach().cpu().numpy()
         log_dict['tv_loss'] = tv_loss.detach().cpu().numpy()
         log_dict['cheat_loss'] = cheat_loss.detach().cpu().numpy()
         log_dict['d_loss'] = d_loss.detach().cpu().numpy()

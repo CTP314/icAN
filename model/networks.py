@@ -74,11 +74,8 @@ def init_net(net, init_type='normal', init_gain=0.02, gpu_id='cuda:0'):
 
 
 def define_G(input_nc, output_nc, ngf, norm='batch', use_dropout=False, init_type='normal', init_gain=0.02, gpu_id='cuda:0'):
-    net = None
     norm_layer = get_norm_layer(norm_type=norm)
-    print('qwq')
     net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=9)
-    print('qwq')
     return init_net(net, init_type, init_gain, gpu_id)
 
 
@@ -345,8 +342,9 @@ class GANLoss(nn.Module):
     
 if __name__ == '__main__':
     net = define_G(4, 4, 64, gpu_id='cuda')
-    # print('qwq')
-    out, bottle = net(torch.randn(1, 4, 128, 128))
+    print(net)
+    out, bottle = net(torch.randn(1, 4, 128, 128).to('cuda'))
     d = define_D(4, 64, 'basic', use_sigmoid=False, gpu_id='cuda')
     print(out.shape)
+    print(bottle.shape)
     print(d(out).shape) 

@@ -93,6 +93,7 @@ class Encoder(nn.Module):
         self.inc = Inconv(input_nc, ngf, norm_layer, use_bias)
         self.down1 = Down(ngf, ngf * 2, norm_layer, use_bias)
         self.down2 = Down(ngf * 2, ngf * 4, norm_layer, use_bias)
+        self.down3 = Down(ngf * 4, ngf * 4, norm_layer, use_bias)
         model = []
         for i in range(n_blocks):
             model += [ResBlock(ngf * 4, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
@@ -104,7 +105,8 @@ class Encoder(nn.Module):
         out['d1'] = self.down1(out['in'])
         out['d2'] = self.down2(out['d1'])     
         out['bottle'] = self.resblocks(out['d2'])
-        return out['bottle']  
+        out['d3'] = self.down3(out['bottle'])
+        return out['d3']  
     
 class Decoder(nn.Module):
     def __init__(self, num_categories, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, latent_size=None):
@@ -121,9 +123,10 @@ class Decoder(nn.Module):
             self.up1 = Up(ngf * 4 + self.latent_size, ngf * 2, norm_layer, use_bias)
         else:
             self.latent_size = None
-            self.up1 = Up(ngf * 4 + self.num_categories, ngf * 2, norm_layer, use_bias)
+            self.up1 = Up(ngf * 4 + self.num_categories, ngf * 4, norm_layer, use_bias)
 
-        self.up2 = Up(ngf * 2, ngf, norm_layer, use_bias)
+        self.up2 = Up(ngf * 4, ngf * 2, norm_layer, use_bias)
+        self.up3 = Up(ngf * 2, ngf * 1, norm_layer, use_bias)
         self.outc = Outconv(ngf, output_nc)
 
     def forward(self, input, theme):
@@ -138,7 +141,8 @@ class Decoder(nn.Module):
             theme = self.embed(theme).reshape(-1, self.latent_size, 1, 1).repeat(1, 1, w, h)
         out['u1'] = self.up1(torch.cat([input, theme], dim=1))
         out['u2'] = self.up2(out['u1'])
-        return self.outc(out['u2'])
+        out['u3'] = self.up3(out['u2'])
+        return self.outc(out['u3'])
 
 
 class Generator(nn.Module):
