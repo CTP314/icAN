@@ -82,18 +82,6 @@ def wandb_init(config: dict):
     )
     wandb.run.save()
 
-# input shape = bsz * cnl * w * h
-def compute_pixel_color_distribution(batched_image):
-    distribution_dict = []
-    for image in batched_image:
-        distribution = {}
-        for w in range(image.shape[1]):
-            for h in range(image.shape[2]):
-                key = str(np.round(image[:,w, h].detach().cpu().numpy(), 1))
-                distribution[key] = distribution[key] + 1 if key in distribution else 1        
-        distribution_dict.append(distribution)
-    return distribution_dict
-
 def RGBA2RGB01(batched_image):
     return ((batched_image[:, :3, ...]+1)/2) * ((batched_image[:, 3, ...]+1)/2).unsqueeze(1)
     
@@ -106,11 +94,12 @@ class ICAN:
         discriminator,
         discriminator_optimizer,
         device,
-        L1_penalty=1000, 
-        edge_L1_penalty=2000,
+        L1_penalty=100, 
+        edge_L1_penalty=0,
         Lconst_penalty=15, 
-        Ltv_penalty=0.1,
-        Lcategory_penalty=1
+        Ltv_penalty=1,
+        Lcategory_penalty=1,
+        cheat_penalty = 10
     ):
         self.generator = generator
         self.generator_optimizer = generator_optimizer
@@ -123,6 +112,7 @@ class ICAN:
         self.Lconst_penalty = Lconst_penalty
         self.Ltv_penalty = Ltv_penalty
         self.Lcategory_penalty = Lcategory_penalty
+        self.cheat_penalty = cheat_penalty
 
         self.total_it = 0
 
@@ -154,42 +144,16 @@ class ICAN:
         # image = (thresholded.data.cpu().numpy()[0, 0]).astype(float)
         # plt.imshow(image)
         # plt.savefig("test.png")
-        # icon_tar = (icon_tar + 1) / 2 * 255
-        # image = icon_tar.permute(0,2,3,1).cpu().numpy()[1,:,:, :3].astype(np.uint8)
-        # plt.imshow(image)
-        # plt.savefig("test5.png")
-        # image = (thresholded.data.cpu().numpy()[1, 0]).astype(float)
-        # plt.imshow(image)
-        # plt.savefig("test2.png")
-        # image = icon_tar.permute(0,2,3,1).cpu().numpy()[2,:,:, :3].astype(np.uint8)
-        # plt.imshow(image)
-        # plt.savefig("test6.png")
-        # image = (thresholded.data.cpu().numpy()[2, 0]).astype(float)
-        # plt.imshow(image)
-        # plt.savefig("test3.png")
-        # image = icon_tar.permute(0,2,3,1).cpu().numpy()[3, :, :, :3].astype(np.uint8)
-        # plt.imshow(image)
-        # plt.savefig("test7.png")
-        # image = (thresholded.data.cpu().numpy()[3, 0]).astype(float)
-        # plt.imshow(image)
-        # plt.savefig("test4.png")
-        # print(icon_ref_rgb[0].permute(1,2,0).shape)
-        # image = ((icon_ref_rgb[0].permute(1,2,0).detach().cpu().numpy()+ 1) / 2 * 255).astype(np.uint8)
-        # plt.imshow(image)
-        # plt.savefig("test.png")
-        # raise NotImplementedError()
         
-        # compute_pixel_color_distribution(icon_fake)
-        
-        real_category_logits, real_D_logits = self.discriminator(icon_tar)
-        fake_category_logits, fake_D_logits = self.discriminator(icon_fake)
+        real_category_logits, real_D_logits = self.discriminator(torch.concat((icon_tar, grad_mag), dim=1))
+        fake_category_logits, fake_D_logits = self.discriminator(torch.concat((icon_fake, grad_mag2), dim=1))
         
         icon_fake_enc = self.generator.encoder(torch.cat([icon_fake, icon_ref], dim=1))
         const_loss = F.mse_loss(icon_fake_enc, icon_src_enc) * self.Lconst_penalty
         
         real_category_loss = F.cross_entropy(real_category_logits, theme_tar)
         fake_category_loss = F.cross_entropy(fake_category_logits, theme_tar)
-        category_loss = self.Lcategory_penalty * (real_category_loss + fake_category_loss)
+        category_loss = self.Lcategory_penalty * (real_category_loss - fake_category_loss)
 
         d_loss_real = F.binary_cross_entropy_with_logits(real_D_logits, torch.ones_like(real_D_logits, dtype=torch.float32))
         d_loss_fake = F.binary_cross_entropy_with_logits(fake_D_logits, torch.zeros_like(fake_D_logits, dtype=torch.float32))
@@ -206,15 +170,15 @@ class ICAN:
         cheat_loss = F.binary_cross_entropy_with_logits(fake_D_logits, torch.ones_like(fake_D_logits, dtype=torch.float32))
         torch.autograd.set_detect_anomaly(True)
 
-        g_loss = cheat_loss + l1_loss + self.Lcategory_penalty * fake_category_loss + const_loss + tv_loss + edge_l1_loss
+        g_loss = self.cheat_penalty * cheat_loss + l1_loss + self.Lcategory_penalty * fake_category_loss + const_loss + tv_loss + edge_l1_loss
         
         self.generator_optimizer.zero_grad()
         g_loss.backward()
         self.generator_optimizer.step()
 
 
-        real_category_logits, real_D_logits = self.discriminator(icon_tar.detach())
-        fake_category_logits, fake_D_logits = self.discriminator(icon_fake.detach())
+        real_category_logits, real_D_logits = self.discriminator(torch.concat((icon_tar, grad_mag), dim=1).detach())
+        fake_category_logits, fake_D_logits = self.discriminator(torch.concat((icon_fake, grad_mag2), dim=1).detach())
         
         real_category_loss = F.cross_entropy(real_category_logits, theme_tar)
         fake_category_loss = F.cross_entropy(fake_category_logits, theme_tar)
@@ -299,7 +263,7 @@ def train(config: TrainConfig):
     )
     discriminator = Discriminator(
         num_categories=config.num_categories,
-        input_nc=config.output_nc,
+        input_nc=config.output_nc+1,
         ndf=config.ngf,
         n_layers=config.n_layers,
         norm_layer=config.norm_layer   
@@ -308,8 +272,8 @@ def train(config: TrainConfig):
     init_net(generator, config.init_type, gpu_id=config.device)
     init_net(discriminator, config.init_type, gpu_id=config.device)
 
-    generator_optimizer = torch.optim.Adam(generator.parameters(), lr=2e-4,  betas=(0.5, 0.999))
-    discriminator_optimizer = torch.optim.Adam(discriminator.parameters(), lr=2e-4,  betas=(0.5, 0.999))
+    generator_optimizer = torch.optim.Adam(generator.parameters(), lr=5e-4,  betas=(0.5, 0.999))
+    discriminator_optimizer = torch.optim.Adam(discriminator.parameters(), lr=1e-5,  betas=(0.5, 0.999))
 
     kwargs = {
         'generator': generator,

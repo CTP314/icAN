@@ -147,7 +147,7 @@ class Net(nn.Module):
         pixel_count = height * width
         pixel_range = torch.FloatTensor([range(pixel_count)])
         if self.use_cuda:
-            pixel_range = torch.cuda.FloatTensor([range(pixel_count)])
+            pixel_range = pixel_range.to(self.device)
 
         # print(inidices_positive.data.shape)
         bsz = inidices_positive.data.shape[0]
