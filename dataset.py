@@ -183,14 +183,3 @@ if __name__ == '__main__':
     icon_edge = train_data.read_icon_edge('app-store', 'clouds')
     train_data.read_icon_with_rlabel(icon['theme'], icon_edge)
     print(icon_edge['img'].shape)
-    cv2.imwrite('edge.png', (icon_edge['img'] / 255 * 2 - 1).astype(np.uint8))
-
-    with tqdm(train_dataloader, desc='loading...') as pbar:
-        for info in pbar:
-            # print(icons_S.shape, icons_T.shape, themes_T.shape)
-            pass
-    # print('=' * 50)
-
-
-# dribbble 3d-plastilina
-# zalo

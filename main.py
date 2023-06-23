@@ -17,11 +17,10 @@ from torch.utils.data import DataLoader
 
 from dataset import IconDataset
 
-from model.basic.encoder import Encoder, Discriminator
-from model.basic.decoder import Decoder
+from model.resnet.gan_resnet import Generator, Discriminator, init_net
     
 @dataclass
-class TrainConfig:
+class Config:
     device: str = 'cuda:0'
     seed: int = 1
     data_path: str = 'data/'
@@ -33,27 +32,29 @@ class TrainConfig:
     bias = True
 
     # 网络超参数
-    latent_size: int = 1024
-    label_size: int = 128
-    image_width: int = 128
-    activation = nn.ELU
-    kernel_channels: int = 64
-    image_channels: int = 4
-    num_categories: int = 270 # 270
-    L1_penalty = 1000 
-    Lconst_penalty = 15 
-    Ltv_penalty = 0.1
-    Lcategory_penalty = 1    
+    num_categories = 10
+    input_nc = 8
+    output_nc = 4
+    ngf = 64
+    norm_layer = nn.BatchNorm2d
+    use_dropout = False
+    n_blocks = 9
+    padding_type = 'reflect'
+    latent_size = None
+    ndf = 128
+    n_layers = 3
+    init_type = 'kaiming'
+
 
     # 训练超参数
-    num_epochs: int = 50
-    batch_size: int = 128
+    num_epochs: int = 200
+    batch_size: int = 64
     eval_freq: int = 10
 
     # Wandb logging
     is_wandb: bool = True
     project: str = 'icAN'
-    name: str = 'basic'
+    name: str = 'resnet-color-ref'
 
     def __post_init__(self):
         self.name = f"{self.name}-{str(uuid.uuid4())[:8]}"
@@ -78,27 +79,27 @@ def wandb_init(config: dict):
     )
     wandb.run.save()
 
+def f2uint(img):
+    return ((img + 1) / 2 * 255).astype(np.uint8)
+
 class ICAN:
     def __init__(
         self,
-        encoder,
-        encoder_optimizer,
-        decoder,
-        decoder_optimizer,
+        generator,
         discriminator,
-        discriminator_optimizer,
+        device,
+        generator_optimizer=None,
+        discriminator_optimizer=None,
         L1_penalty=1000, 
         Lconst_penalty=15, 
         Ltv_penalty=0.1,
         Lcategory_penalty=1
     ):
-        self.encoder = encoder
-        self.encoder_optimizer = encoder_optimizer
-        self.decoder = decoder
-        self.decoder_optimizer = decoder_optimizer
+        self.generator = generator
+        self.generator_optimizer = generator_optimizer
         self.discriminator = discriminator
         self.discriminator_optimizer = discriminator_optimizer
-
+        self.device = device
 
         self.L1_penalty = L1_penalty
         self.Lconst_penalty = Lconst_penalty
@@ -108,23 +109,21 @@ class ICAN:
         self.total_it = 0
 
     def train(self, batch):
-        self.encoder.train()
-        self.decoder.train()
+        self.generator.train()
         self.discriminator.train()
 
         self.total_it += 1
-        icon_src, icon_tar, theme_tar = batch
+        icon_ref, icon_src, icon_tar, theme_tar = batch
         log_dict = {}
         # print(icon_src.shape)
-        icon_src_enc = self.encoder(icon_src)
-        icon_fake = self.decoder(icon_src_enc, theme_tar)
+        icon_src_enc = self.generator.encoder(torch.cat([icon_src, icon_ref], dim=1))
+        icon_fake = self.generator.decoder(icon_src_enc, theme_tar)
         
         real_category_logits, real_D_logits = self.discriminator(icon_tar)
         fake_category_logits, fake_D_logits = self.discriminator(icon_fake)
         
-        icon_fake_enc = self.encoder(icon_fake)
+        icon_fake_enc = self.generator.encoder(torch.cat([icon_fake, icon_ref], dim=1))
         const_loss = F.mse_loss(icon_fake_enc, icon_src_enc) * self.Lconst_penalty
-        # const_loss = torch.zeros(1).to(self.encoder.device)
         
         real_category_loss = F.cross_entropy(real_category_logits, theme_tar)
         fake_category_loss = F.cross_entropy(fake_category_logits, theme_tar)
@@ -143,13 +142,10 @@ class ICAN:
         cheat_loss = F.binary_cross_entropy_with_logits(fake_D_logits, torch.ones_like(fake_D_logits, dtype=torch.float32))
 
         g_loss = cheat_loss + l1_loss + self.Lcategory_penalty * fake_category_loss + const_loss + tv_loss
-        self.encoder_optimizer.zero_grad()
-        self.decoder_optimizer.zero_grad()
         
+        self.generator_optimizer.zero_grad()
         g_loss.backward()
-        
-        self.encoder_optimizer.step()
-        self.decoder_optimizer.step()
+        self.generator_optimizer.step()
 
 
         real_category_logits, real_D_logits = self.discriminator(icon_tar.detach())
@@ -180,44 +176,34 @@ class ICAN:
         
         return log_dict
     
-    def generate(self, icon_src, theme_id):
-        self.encoder.eval()
-        self.decoder.eval()
+    def generate(self, icon_ref, icon_src, theme_id):
+        self.generator.eval()
         with torch.no_grad():
-            icon_src = torch.FloatTensor(icon_src).to(self.encoder.device).permute(2, 0, 1).unsqueeze(0)
-            theme_id = torch.LongTensor([theme_id]).to(self.encoder.device)
-            icon_src_enc = self.encoder(icon_src)
-            icon_tar = self.decoder(icon_src_enc, theme_id).squeeze(0).detach().permute(1, 2, 0).cpu().numpy()
-            icon_tar = (icon_tar * 255).astype(np.uint8)
+            icon_ref = torch.FloatTensor(icon_ref).to(self.device).permute(2, 0, 1).unsqueeze(0)
+            icon_src = torch.FloatTensor(icon_src).to(self.device).permute(2, 0, 1).unsqueeze(0)
+            theme_id = torch.LongTensor([theme_id]).to(self.device)
+            icon_tar = self.generator(torch.cat([icon_src, icon_ref], 1), theme_id).squeeze().permute(1, 2, 0).cpu().numpy()
         return icon_tar
 
     def state_dict(self) -> Dict[str, Any]:
         return {
-            "encoder": self.encoder,
-            "decoder": self.decoder,
+            "encoder": self.generator,
             "discriminator": self.discriminator,
         }
     
     def save(self, path):
+        state_dict = {}
         for k, v in self.state_dict().items():
             v.to('cpu')
-            torch.save(v.state_dict(), os.path.join(path, f"{k}_{self.total_it}.pt"))  
-            v.to('cuda')
+            state_dict[k] = v.state_dict()
+            v.to(self.device)
+        torch.save(state_dict, os.path.join(path, f"{self.total_it}.pt"))
 
     def load_state_dict(self, state_dict: Dict[str, Any]):
-        self.encoder.load_state_dict(state_dict["encoder"])
-        self.encoder_optimizer.load_state_dict(state_dict["encoder_optimizer"])
-
-        self.decoder.load_state_dict(state_dict["decoder"])
-        self.decoder_optimizer.load_state_dict(state_dict["decoder_optimizer"])
-
-        self.discriminator.load_state_dict(state_dict["discriminator"])
-        self.discriminator_optimizer.load_state_dict(state_dict["discriminator_optimizer"])
-
-        self.total_it = state_dict["total_it"]
+        raise NotImplementedError
 
 @pyrallis.wrap()
-def train(config: TrainConfig):
+def train(config: Config):
     train_dataset = IconDataset(
         data_path=config.data_path, 
         device=config.device,
@@ -228,33 +214,49 @@ def train(config: TrainConfig):
         train_dataset, 
         config.batch_size, 
         shuffle=True, 
-        collate_fn=train_dataset.collate_fn
+        collate_fn=train_dataset.collate_fn_ab
     )
 
     seed = config.seed
     set_seed(seed)
 
-    encoder = Encoder(config).to(config.device)
-    discriminator = Discriminator(config).to(config.device)
-    decoder = Decoder(config).to(config.device)
+    generator = Generator(
+        num_categories=config.num_categories,
+        input_nc=config.input_nc,
+        output_nc=config.output_nc,
+        ngf=config.ngf,
+        norm_layer=config.norm_layer,
+        use_dropout=config.use_dropout,
+        n_blocks=config.n_blocks,
+        padding_type=config.padding_type,
+        latent_size=config.latent_size
+    )
+    discriminator = Discriminator(
+        num_categories=config.num_categories,
+        input_nc=config.output_nc,
+        ndf=config.ngf,
+        n_layers=config.n_layers,
+        norm_layer=config.norm_layer   
+    )
 
-    encoder_optimizer = torch.optim.Adam(encoder.parameters(), lr=2e-4,  betas=(0.5, 0.999))
-    decoder_optimizer = torch.optim.Adam(decoder.parameters(), lr=2e-4,  betas=(0.5, 0.999))
+    init_net(generator, config.init_type, gpu_id=config.device)
+    init_net(discriminator, config.init_type, gpu_id=config.device)
+
+    generator_optimizer = torch.optim.Adam(generator.parameters(), lr=2e-4,  betas=(0.5, 0.999))
     discriminator_optimizer = torch.optim.Adam(discriminator.parameters(), lr=2e-4,  betas=(0.5, 0.999))
 
     kwargs = {
-        'encoder': encoder,
-        'encoder_optimizer': encoder_optimizer,
-        'decoder': decoder,
-        'decoder_optimizer': decoder_optimizer,
+        'generator': generator,
+        'generator_optimizer': generator_optimizer,
         'discriminator': discriminator,
-        'discriminator_optimizer': discriminator_optimizer
+        'discriminator_optimizer': discriminator_optimizer,
+        'device': config.device,
     }
 
     trainer = ICAN(**kwargs)
 
     print('-' * 50)
-    print(f'Training icAN, Seed: {seed}')
+    print(f'Training icAN, Seed: {seed}, Name: {config.name}')
     print('-' * 50)
 
     if config.load_model != '':
@@ -277,16 +279,33 @@ def train(config: TrainConfig):
 
         if (epoch + 1) % config.eval_freq == 0:
             print(f'Epoch: {epoch} evaluating...')
-            for theme in train_dataset.themes:
-                for label in ['app-store', 'chrome', 'weibo', 'genshin-impact']:
-                    icon_src = train_dataset.read_icon(label, 'ios7')
-                    icon_tar = trainer.generate(icon_src, theme_id=train_dataset.theme2id[theme])
-                    os.makedirs(f'eval/{config.name}/{epoch}/{label}', exist_ok=True)
-                    cv2.imwrite(f'eval/{config.name}/{epoch}/{label}/{theme}.png', 
-                                icon_tar, 
-                                [cv2.IMWRITE_PNG_COMPRESSION, 0]
-                    )
-                    
+            log_dict = {}
+            for label in ['app-store', 'chrome', 'weibo', 'genshin-impact', 'adobe-illustrator']:
+                output = []
+                for theme in train_dataset.themes:
+                    if theme in train_dataset.label2theme[label]:
+                        icon_src = train_dataset.read_icon(label, theme)
+                        icons = [icon_src['img']]
+                        for theme_tar in train_dataset.themes:
+                            icon_ref = train_dataset.read_icon_with_rlabel(theme_tar, icon_src)
+                            icon_tar = trainer.generate(icon_ref['img'], icon_src['img'], theme_id=train_dataset.theme2id[theme_tar])
+                            icons.append(icon_ref['img'])
+                            icons.append(icon_tar)
+                    else:
+                        icons = [np.zeros((128, 128, 4))]
+                        for theme_tar in train_dataset.themes:
+                            icons.append(np.zeros((128, 128, 4)))  
+                            icons.append(np.zeros((128, 128, 4)))
+                    # print(np.concatenate(icons, axis=1).shape)   
+                    output.append(np.concatenate(icons, axis=1))                   
+                output = ((np.concatenate(output, axis=0) + 1) / 2 * 255).astype(np.uint8)
+                output_wandb = cv2.cvtColor(output, cv2.COLOR_BGRA2RGBA)
+                log_dict[label] = wandb.Image(output_wandb, caption=label) 
+                os.makedirs(f'eval/{config.name}/{epoch}', exist_ok=True)
+                cv2.imwrite(f'eval/{config.name}/{epoch}/{label}.png', 
+                            output, 
+                )
+            wandb.log(log_dict, step=trainer.total_it)
             if config.checkpoints_path is not None:
                 os.makedirs(config.checkpoints_path, exist_ok=True)
                 trainer.save(config.checkpoints_path)

@@ -11,7 +11,7 @@ s = Service("./msedgedriver.exe")
 driver = webdriver.Edge(service=s)
 
 # 目标网页的URL
-url = "https://icons8.com/icon/set/logos/ios"
+url = "https://icons8.com/icon"
 check_height = driver.execute_script("return document.body.scrollHeight;")
 # 使用浏览器驱动打开网页
 driver.get(url)
@@ -29,10 +29,10 @@ while(True):
         break
 
 # 将 image_names 列表保存到文件，文件名全部小写并将空格改为连字符
-with open("./utils/image_names.txt", "w") as file:
+with open("./scrawler/image_names.txt", "w") as file:
     for name in image_names:
         # 将文件名转换为小写，并将空格替换为连字符
         modified_name = name.lower().replace(" ", "-")
         file.write(modified_name + "\n")
 
-print("图片名称已保存到文件 image_names.txt")
+print("save image_names.txt")
