@@ -139,6 +139,28 @@ class Decoder(nn.Module):
         out['u1'] = self.up1(torch.cat([input, theme], dim=1))
         out['u2'] = self.up2(out['u1'])
         return self.outc(out['u2'])
+    
+    def interpolate(self, input, theme, theme_, alpha):
+        out = {}
+        _, _, w, h = input.shape
+        if self.latent_size is None:
+            theme = torch.nn.functional.one_hot(
+                theme, 
+                num_classes=self.num_categories
+            ).reshape(-1, self.num_categories, 1, 1).repeat(1, 1, w, h)
+
+            theme_ = torch.nn.functional.one_hot(
+                theme_, 
+                num_classes=self.num_categories
+            ).reshape(-1, self.num_categories, 1, 1).repeat(1, 1, w, h)
+        else:
+            theme = self.embed(theme).reshape(-1, self.latent_size, 1, 1).repeat(1, 1, w, h)
+            theme_ = self.embed(theme_).reshape(-1, self.latent_size, 1, 1).repeat(1, 1, w, h) 
+
+        theme = theme + alpha * (theme_ - theme)          
+        out['u1'] = self.up1(torch.cat([input, theme], dim=1))
+        out['u2'] = self.up2(out['u1'])
+        return self.outc(out['u2'])
 
 
 class Generator(nn.Module):

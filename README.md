@@ -13,7 +13,7 @@ train_basic: 最基本的模型
 
 train_resnet：中间加入 res_block
 
-train_icon: 加入 reference picture
+train_icon: 加入 reference pictur
 
 ## To do
 
@@ -22,6 +22,11 @@ train_icon: 加入 reference picture
 搞一下embedding的降维可视化
 训练，训练，调参，调参！
 写report，海报
+
+网络结构：基于原图画一下
+
+
+颜色： 一开始把颜色选取好
 
 ## 环境
 
