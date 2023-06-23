@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 
 from dataset import IconDataset
 
-from model.resnet.gan_resnet import Generator, Discriminator, init_net
+from model.resnet.gan_resnet_vanilla import Generator, Discriminator, init_net
     
 @dataclass
 class TrainConfig:
