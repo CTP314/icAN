@@ -32,7 +32,6 @@ class IconDataset(Dataset):
                 for theme_file in filenames:
                     if theme_file[-3:] == 'png':
                         theme = theme_file[:-4]
-                        # print(os.path.join(self.data_path, label, theme+'.png'))
                         img = cv2.imread(os.path.join(self.data_path, label, theme+'.png'), cv2.IMREAD_UNCHANGED)
                         if img is not None and img.shape == (128, 128, 4):
                             self.label2theme[label].append(theme)

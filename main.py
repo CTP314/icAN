@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 
 from dataset import IconDataset
 
-from model.resnet.gan_resnet import Generator, Discriminator, init_net
+from models.resnet.gan_resnet import Generator, Discriminator, init_net
     
 @dataclass
 class Config:
@@ -52,7 +52,7 @@ class Config:
     eval_freq: int = 10
 
     # Wandb logging
-    is_wandb: bool = True
+    is_wandb: bool = False
     project: str = 'icAN'
     name: str = 'resnet-color-ref'
 
