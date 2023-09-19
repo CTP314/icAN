@@ -2,6 +2,10 @@
 
 Style transfer is an important area of research in the field of generative AI, with applications in a wide range of fields, including art, design, and advertising. This work explores the use of GAN in style transfer for icons across different platform styles.
 
+![various](assets/various.png)
+
+![network](assets/network.png)
+
 ## Code Structure
 
 The project structure is as follows:
